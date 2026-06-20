@@ -1,9 +1,7 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import json
 import random
 import re
-from pathlib import Path
 import os
 import threading
 from flask import Flask
@@ -22,7 +20,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 # =======================================================
 
-TOKEN = "8585361267:AAFCZovaqnFdkKw5t5KUt988fVpkBX2s0ok"  # ← заміни на свій
+TOKEN = "8585361267:AAFCZovaqnFdkKw5t5KUt988fVpkBX2s0ok"
 bot = telebot.TeleBot(TOKEN)
 
 # ===================== ВСІ РОЛИ =====================
@@ -133,16 +131,43 @@ ROLLS_DATA = {
     "Кето суші 8": ["Норі 1", "Лосось 60г", "Рис 50г", "Ікра масаго 20г", "Креветка тигрова 30г"]
 }
 
-# ===================== СТАН =====================
-user_state = {}
+# ===================== КАТЕГОРІЇ =====================
+def get_category_rolls(category):
+    all_rolls = list(ROLLS_DATA.keys())
+    if category == "all":
+        return all_rolls
+    elif category == "cold":
+        fried = get_category_rolls("fried")
+        baked = get_category_rolls("baked")
+        return [r for r in all_rolls if r not in fried and r not in baked]
+    elif category == "fried":
+        try:
+            start = all_rolls.index("Банзай")
+            end = all_rolls.index("Фіджі") + 1
+            return all_rolls[start:end]
+        except:
+            return []
+    elif category == "baked":
+        try:
+            start = all_rolls.index("Запечений з лососем")
+            end = all_rolls.index("Запечений в ікрі з лососем") + 1
+            return all_rolls[start:end]
+        except:
+            return []
+    return all_rolls
 
-def get_rolls_list():
-    return list(ROLLS_DATA.keys())
+def get_category_name(cat):
+    names = {"all": "Всі", "cold": "Холодні", "fried": "Жарені", "baked": "Запечені"}
+    return names.get(cat, "Всі")
 
 # ===================== КЛАВІАТУРИ =====================
 def main_menu():
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(InlineKeyboardButton("🚀 Почати навчання", callback_data="start_learning"))
+    markup.add(InlineKeyboardButton("🚀 Почати тест", callback_data="start_learning"))
+    markup.add(InlineKeyboardButton("📖 Всі роли", callback_data="show_all_rolls"))
+    markup.add(InlineKeyboardButton("❄️ Холодні", callback_data="cat_cold"))
+    markup.add(InlineKeyboardButton("🔥 Жарені", callback_data="cat_fried"))
+    markup.add(InlineKeyboardButton("🧀 Запечені", callback_data="cat_baked"))
     markup.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
     return markup
 
@@ -152,34 +177,68 @@ def quantity_menu():
         markup.add(InlineKeyboardButton(f"{q} ролів", callback_data=f"qty_{q}"))
     return markup
 
+def back_to_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("← Головне меню", callback_data="main_menu"))
+    return markup
+
+# ===================== СТАН =====================
+user_state = {}
+
 # ===================== ХЕНДЛЕРИ =====================
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.send_message(message.chat.id, 
-        "👋 Привіт! Я твій персональний тренер по меню суші.\n\n"
-        "Вчу склади **всіх ролів** від Макі до Кето 8.\n"
-        "Готовий?", 
+        "👋 Привіт! Я твій тренер по меню суші.\n\n"
+        "Обери, що хочеш робити:", 
         reply_markup=main_menu())
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    if call.data == "start_learning":
-        bot.edit_message_text("Скільки ролів вчимо сьогодні?", 
-                            call.message.chat.id, call.message.message_id, 
-                            reply_markup=quantity_menu())
-    
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    msg_id = call.message.message_id
+
+    if call.data == "main_menu":
+        bot.edit_message_text("Обери дію:", chat_id, msg_id, reply_markup=main_menu())
+
+    elif call.data == "start_learning":
+        bot.edit_message_text("Обери категорію для навчання:", chat_id, msg_id, reply_markup=category_menu())
+
+    elif call.data.startswith("cat_"):
+        cat = call.data.split("_")[1]
+        user_state[user_id] = {"category": cat}
+        bot.edit_message_text(f"Скільки ролів **{get_category_name(cat)}** вчимо сьогодні?", 
+                            chat_id, msg_id, reply_markup=quantity_menu(), parse_mode="Markdown")
+
     elif call.data.startswith("qty_"):
         qty = int(call.data.split("_")[1])
-        rolls = random.sample(get_rolls_list(), min(qty, len(ROLLS_DATA)))
-        user_state[call.from_user.id] = {
+        cat = user_state.get(user_id, {}).get("category", "all")
+        available = get_category_rolls(cat)
+        rolls = random.sample(available, min(qty, len(available)))
+        
+        user_state[user_id] = {
             "current_rolls": rolls,
             "index": 0,
             "score": 0,
             "total": len(rolls),
-            "answered": {}
+            "answered": {},
+            "category": cat
         }
-        ask_next_roll(call.message.chat.id, call.from_user.id)
+        ask_next_roll(chat_id, user_id)
 
+    elif call.data == "show_all_rolls":
+        show_rolls_list(chat_id)
+
+def category_menu():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(InlineKeyboardButton("❄️ Холодні", callback_data="cat_cold"))
+    markup.add(InlineKeyboardButton("🔥 Жарені", callback_data="cat_fried"))
+    markup.add(InlineKeyboardButton("🧀 Запечені", callback_data="cat_baked"))
+    markup.add(InlineKeyboardButton("🌐 Всі", callback_data="cat_all"))
+    return markup
+
+# ===================== ТЕСТ =====================
 def ask_next_roll(chat_id, user_id):
     state = user_state.get(user_id)
     if not state or state["index"] >= state["total"]:
@@ -190,13 +249,32 @@ def ask_next_roll(chat_id, user_id):
     bot.send_message(chat_id, 
         f"🎯 **Рол №{state['index']+1} / {state['total']}**\n\n"
         f"**{roll_name}**\n\n"
-        f"Напиши склад (через кому або з нового рядка):")
+        f"Напиши склад (через кому або кожен з нового рядка).\n\n"
+        f"💡 **Приклад:**\n`Рис 130г, Вершковий сир 40г, Лосось 90г зверху, Норі 2/3`",
+        parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: True)
 def handle_answer(message):
     user_id = message.from_user.id
     state = user_state.get(user_id)
     if not state or state["index"] >= state["total"]:
+        bot.send_message(message.chat.id, "Натисни кнопку «🚀 Почати тест»", reply_markup=main_menu())
+        return
+
+    roll_name = state["current_rolls"][state["index"]]
+    bot.send_message(chat_id, 
+        f"🎯 **Рол №{state['index']+1} / {state['total']}**\n\n"
+        f"**{roll_name}**\n\n"
+        f"Напиши склад (через кому або кожен з нового рядка).\n\n"
+        f"💡 **Приклад:**\n`Рис 130г, Вершковий сир 40г, Лосось 90г зверху, Норі 2/3`",
+        parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: True)
+def handle_answer(message):
+    user_id = message.from_user.id
+    state = user_state.get(user_id)
+    if not state or state["index"] >= state["total"]:
+        bot.send_message(message.chat.id, "Натисни кнопку «🚀 Почати тест»", reply_markup=main_menu())
         return
 
     roll_name = state["current_rolls"][state["index"]]
@@ -206,7 +284,6 @@ def handle_answer(message):
     user_text = message.text.lower()
     user_items = [x.strip() for x in re.split(r'[,;\n]', user_text) if x.strip()]
 
-    # Проста перевірка
     matches = sum(1 for u in user_items for c in correct_lower if u in c or c in u)
     accuracy = round((matches / len(correct_list)) * 100) if correct_list else 0
 
@@ -221,7 +298,7 @@ def handle_answer(message):
     elif accuracy >= 75:
         response += "\n\n👍 Добре"
     else:
-        response += "\n\n🔁 Потренуй ще раз"
+        response += "\n\n🔁 Потренуй ще"
 
     bot.send_message(message.chat.id, response)
     
@@ -237,7 +314,20 @@ def finish_session(chat_id, user_id):
         f"Вивчено: {state['total']} ролів\n\n"
         f"Молодець! Продовжуємо?", 
         reply_markup=main_menu())
-    del user_state[user_id]
+    if user_id in user_state:
+        del user_state[user_id]
+
+# ===================== ДОВІДНИК =====================
+def show_rolls_list(chat_id):
+    rolls = list(ROLLS_DATA.keys())
+    text = "📖 **Список усіх ролів**\n\n"
+    for i, roll in enumerate(rolls, 1):
+        text += f"{i}. {roll}\n"
+        if i % 20 == 0:
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+            text = ""
+    if text:
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=back_to_menu())
 
 # ===================== ЗАПУСК =====================
 if __name__ == "__main__":
