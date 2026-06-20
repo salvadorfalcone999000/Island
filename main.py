@@ -202,23 +202,29 @@ def callback_handler(call):
     if call.data == "main_menu":
         bot.edit_message_text("Обери дію:", chat_id, msg_id, reply_markup=main_menu())
 
-    # Тест
+    # === Почати тест ===
     elif call.data == "start_learning":
         bot.edit_message_text("Обери категорію для тесту:", chat_id, msg_id, reply_markup=category_menu())
 
-    elif call.data.startswith("cat_") or call.data.startswith("ref_"):
+    # === Вибір категорії для тесту ===
+    elif call.data.startswith("ref_"):   # ref_ — для довідника
         cat = call.data.split("_")[1]
-        if call.data.startswith("cat_"):
-            user_state[user_id] = {"category": cat}
-            bot.edit_message_text(f"Скільки ролів **{get_category_name(cat)}** вчимо?", 
-                                chat_id, msg_id, reply_markup=quantity_menu(), parse_mode="Markdown")
-        else:
-            show_category_reference(chat_id, cat)
+        show_category_reference(chat_id, cat)
 
+    elif call.data.startswith("cat_"):   # cat_ — для тесту
+        cat = call.data.split("_")[1]
+        user_state[user_id] = {"category": cat}
+        bot.edit_message_text(f"Скільки ролів **{get_category_name(cat)}** будемо вчити?", 
+                            chat_id, msg_id, reply_markup=quantity_menu(), parse_mode="Markdown")
+
+    # === Кількість ролів для тесту ===
     elif call.data.startswith("qty_"):
         qty = int(call.data.split("_")[1])
         cat = user_state.get(user_id, {}).get("category", "all")
         available = get_category_rolls(cat)
+        if not available:
+            bot.send_message(chat_id, "У цій категорії немає ролів.")
+            return
         rolls = random.sample(available, min(qty, len(available)))
         user_state[user_id] = {
             "current_rolls": rolls,
@@ -230,8 +236,9 @@ def callback_handler(call):
         }
         ask_next_roll(chat_id, user_id)
 
+    # === Довідник ===
     elif call.data == "show_reference":
-        bot.edit_message_text("Обери категорію для перегляду складу:", chat_id, msg_id, reply_markup=category_menu())
+        bot.edit_message_text("Обери категорію для перегляду:", chat_id, msg_id, reply_markup=category_menu())
 
 # ===================== ТЕСТ =====================
 def ask_next_roll(chat_id, user_id):
@@ -242,7 +249,8 @@ def ask_next_roll(chat_id, user_id):
     roll_name = state["current_rolls"][state["index"]]
     bot.send_message(chat_id, 
         f"🎯 **Рол №{state['index']+1} / {state['total']}**\n\n"
-        f"**{roll_name}**\n\nНапиши склад.\n\n"
+        f"**{roll_name}**\n\n"
+        f"Напиши склад інгредієнтів.\n\n"
         f"💡 Приклад: `Рис 130г, Вершковий сир 40г, Лосось 90г зверху, Норі 2/3`",
         parse_mode="Markdown")
 
@@ -251,37 +259,37 @@ def handle_answer(message):
     user_id = message.from_user.id
     state = user_state.get(user_id)
 
-    if state and "current_rolls" in state:
-       # Логіка тесту
-        roll_name = state["current_rolls"][state["index"]]
-        correct_list = ROLLS_DATA[roll_name]
-        correct_lower = [item.lower() for item in correct_list]
-
-        user_text = message.text.lower()
-        user_items = [x.strip() for x in re.split(r'[,;\n]', user_text) if x.strip()]
-
-        matches = sum(1 for u in user_items for c in correct_lower if u in c or c in u)
-        accuracy = round((matches / len(correct_list)) * 100) if correct_list else 0
-
-        state["answered"][roll_name] = accuracy
-        state["score"] += accuracy
-
-        response = f"✅ **{roll_name}**\n\n**Правильний склад:**\n" + "\n".join(correct_list) + "\n\n"
-        response += f"Твоя точність: **{accuracy}%**"
-
-        if accuracy == 100:
-            response += "\n\n🎉 Ідеально!"
-        elif accuracy >= 75:
-            response += "\n\n👍 Добре"
-        else:
-            response += "\n\n🔁 Потренуй ще"
-
-        bot.send_message(message.chat.id, response)
-        state["index"] += 1
-        ask_next_roll(message.chat.id, user_id)
+    if not state or "current_rolls" not in state:
+        bot.send_message(message.chat.id, "Обери дію з меню.", reply_markup=main_menu())
         return
 
-    bot.send_message(message.chat.id, "Обери дію з меню.", reply_markup=main_menu())
+    roll_name = state["current_rolls"][state["index"]]
+    correct_list = ROLLS_DATA[roll_name]
+    correct_lower = [item.lower() for item in correct_list]
+
+    user_text = message.text.lower()
+    user_items = [x.strip() for x in re.split(r'[,;\n]', user_text) if x.strip()]
+
+    matches = sum(1 for u in user_items for c in correct_lower if u in c or c in u)
+    accuracy = round((matches / len(correct_list)) * 100) if correct_list else 0
+
+    state["answered"][roll_name] = accuracy
+    state["score"] += accuracy
+
+    response = f"✅ **{roll_name}**\n\n**Правильний склад:**\n" + "\n".join(correct_list) + "\n\n"
+    response += f"Твоя точність: **{accuracy}%**"
+
+    if accuracy == 100:
+        response += "\n\n🎉 Ідеально!"
+    elif accuracy >= 75:
+        response += "\n\n👍 Добре"
+    else:
+        response += "\n\n🔁 Потренуй ще"
+
+    bot.send_message(message.chat.id, response)
+    
+    state["index"] += 1
+    ask_next_roll(message.chat.id, user_id)
 
 def finish_session(chat_id, user_id):
     state = user_state[user_id]
@@ -314,4 +322,4 @@ def show_category_reference(chat_id, category):
 # ===================== ЗАПУСК =====================
 if __name__ == "__main__":
     print("🍣 Sushi Learning Bot запущено!")
-    bot.infinity_polling()  
+    bot.infinity_polling()
