@@ -131,7 +131,6 @@ ROLLS_DATA = {
     "Кето суші 8": ["Норі 1", "Лосось 60г", "Рис 50г", "Ікра масаго 20г", "Креветка тигрова 30г"]
 }
 
-# ===================== КАТЕГОРІЇ =====================
 def get_category_rolls(category):
     all_rolls = list(ROLLS_DATA.keys())
     if category == "all":
@@ -185,7 +184,6 @@ def back_to_menu():
     markup.add(InlineKeyboardButton("← Головне меню", callback_data="main_menu"))
     return markup
 
-# ===================== СТАН =====================
 user_state = {}
 
 # ===================== ХЕНДЛЕРИ =====================
@@ -202,29 +200,22 @@ def callback_handler(call):
     if call.data == "main_menu":
         bot.edit_message_text("Обери дію:", chat_id, msg_id, reply_markup=main_menu())
 
-    # === Почати тест ===
+    # Почати тест
     elif call.data == "start_learning":
-        bot.edit_message_text("Обери категорію для тесту:", chat_id, msg_id, reply_markup=category_menu())
+        bot.edit_message_text("Обери категорію для **тесту**:", chat_id, msg_id, reply_markup=category_menu_for_test())
 
-    # === Вибір категорії для тесту ===
-    elif call.data.startswith("ref_"):   # ref_ — для довідника
-        cat = call.data.split("_")[1]
-        show_category_reference(chat_id, cat)
-
-    elif call.data.startswith("cat_"):   # cat_ — для тесту
-        cat = call.data.split("_")[1]
+    # Вибір категорії для тесту
+    elif call.data.startswith("test_cat_"):
+        cat = call.data.split("_")[2]
         user_state[user_id] = {"category": cat}
         bot.edit_message_text(f"Скільки ролів **{get_category_name(cat)}** будемо вчити?", 
                             chat_id, msg_id, reply_markup=quantity_menu(), parse_mode="Markdown")
 
-    # === Кількість ролів для тесту ===
+    # Кількість для тесту
     elif call.data.startswith("qty_"):
         qty = int(call.data.split("_")[1])
         cat = user_state.get(user_id, {}).get("category", "all")
         available = get_category_rolls(cat)
-        if not available:
-            bot.send_message(chat_id, "У цій категорії немає ролів.")
-            return
         rolls = random.sample(available, min(qty, len(available)))
         user_state[user_id] = {
             "current_rolls": rolls,
@@ -236,9 +227,21 @@ def callback_handler(call):
         }
         ask_next_roll(chat_id, user_id)
 
-    # === Довідник ===
+    # Довідник
     elif call.data == "show_reference":
-        bot.edit_message_text("Обери категорію для перегляду:", chat_id, msg_id, reply_markup=category_menu())
+        bot.edit_message_text("Обери категорію для **довідника**:", chat_id, msg_id, reply_markup=category_menu())
+
+    elif call.data.startswith("ref_"):
+        cat = call.data.split("_")[1]
+        show_category_reference(chat_id, cat)
+
+def category_menu_for_test():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(InlineKeyboardButton("❄️ Холодні", callback_data="test_cat_cold"))
+    markup.add(InlineKeyboardButton("🔥 Жарені", callback_data="test_cat_fried"))
+    markup.add(InlineKeyboardButton("🧀 Запечені", callback_data="test_cat_baked"))
+    markup.add(InlineKeyboardButton("🌐 Всі", callback_data="test_cat_all"))
+    return markup
 
 # ===================== ТЕСТ =====================
 def ask_next_roll(chat_id, user_id):
